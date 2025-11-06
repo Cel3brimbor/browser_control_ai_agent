@@ -1,0 +1,3 @@
+[submodule "gemma_4b/gemma-3-4b-it"]
+	path = gemma_4b/gemma-3-4b-it
+	url = https://huggingface.co/google/gemma-3-4b-it
