@@ -1,0 +1,15 @@
+url-blocker-ai/
+├─ manifest.json
+├─ background.js
+├─ content.js
+├─ popup/
+│   ├─ popup.html
+│   ├─ popup.js
+│   └─ popup.css
+├─ blocked.html
+├─ ai/
+│   └─ agent.js
+└─ icons/
+    ├─ icon16.png
+    ├─ icon48.png
+    └─ icon128.png
