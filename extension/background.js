@@ -144,9 +144,9 @@ function explicitBlock(tabId) {
 async function agentDetermination(newUrl, newTitle, currentTabTitles, config, accessToken) {
   const prompt = `
   These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}. They are comma-seperated.
-  Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones?
-  Return a number from 0 to 10. 0 for most likely off-task, 10 for most likely on-task.
-  Do not return decimal values, only integers.`;
+  Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones? Do not be too strict. 
+  As long as the tab is not too unrelated, do not block.
+  Return 0 or 1 only. 0 for off-task, 1 for on-task.`;
 
   const payload = {
     model: config.model,
@@ -172,16 +172,7 @@ async function agentDetermination(newUrl, newTitle, currentTabTitles, config, ac
     const data = await resp.json();
     const answer = data.choices?.[0]?.message?.content?.trim();
 
-    const score = parseInt(answer, 10);
-
-    if (!isNaN(score)) {
-      return score >= 5;
-    }
-
-    return false;
-
-    //return answer === '1';
-
+    return answer === '1';
   } catch (err) {
     console.error('Gemini error:', err);
     return false;
