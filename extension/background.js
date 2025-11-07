@@ -145,7 +145,7 @@ async function agentDetermination(newUrl, newTitle, currentTabTitles, config, ac
   const prompt = `
   These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}. They are comma-seperated.
   Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones?
-  As long as the tab is not too unrelated, do not block. Block if it may hinder user's productivity on current tabs.
+  It is on-task if it most likely helps the user's current tabs, and off-task if it is most likely a distraction.
   Return 0 or 1 only. 0 for off-task, 1 for on-task.`;
 
   const payload = {
