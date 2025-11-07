@@ -1,0 +1,51 @@
+body {
+    font-family: system-ui, sans-serif; 
+    width: 340px; 
+    padding: 12px; 
+    margin: 0; 
+}
+h3, h4 {
+    margin: 8px 0; 
+}
+input, button {
+    width: 100%; 
+    padding: 6px; 
+    margin: 4px 0; 
+    box-sizing: border-box; 
+}
+button {
+    background: #1976d2; 
+    color: white; 
+    border: none; 
+    cursor: pointer; 
+}
+button:hover {
+    background: #1565c0; 
+}
+ul {
+    list-style: none; 
+    padding: 0; 
+    max-height: 120px; 
+    overflow-y: auto; 
+    margin: 6px 0; 
+}
+li {
+    display: flex; 
+    justify-content: space-between; 
+    padding: 4px 0; 
+    font-size: 0.9em; 
+}
+li button {
+    width: auto; 
+    padding: 2px 6px; 
+    font-size: 0.8em; 
+}
+hr {
+    margin: 12px 0; 
+    border: 0; 
+    border-top: 1px solid #ddd; 
+}
+p {
+    font-size: 0.8em; 
+    color: #666; 
+}
