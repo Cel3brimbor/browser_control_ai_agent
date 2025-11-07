@@ -144,8 +144,8 @@ function explicitBlock(tabId) {
 async function agentDetermination(newUrl, newTitle, currentTabTitles, config, accessToken) {
   const prompt = `
   These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}. They are comma-seperated.
-  Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones? Do not be too strict. 
-  As long as the tab is not too unrelated, do not block.
+  Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones?
+  As long as the tab is not too unrelated, do not block. Block if it may hinder user's productivity on current tabs.
   Return 0 or 1 only. 0 for off-task, 1 for on-task.`;
 
   const payload = {
