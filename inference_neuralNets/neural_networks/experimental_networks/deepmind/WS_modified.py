@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Dense, Input, TextVectorization, Embedding, GlobalAveragePooling1D, Concatenate, Layer #type: ignore
+from tensorflow.keras.layers import Dense, Input, TextVectorization, Embedding, LSTM, Concatenate, Layer #type: ignore
 from tensorflow.keras.models import Model #type: ignore
 import keras.ops as K
 import numpy as np
@@ -7,20 +7,18 @@ import json
 from sklearn.model_selection import train_test_split
 import os
 
-# List of dataset paths
 dataset_paths = [
-    #"/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/variety.json",
-    "/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/physics/physics_dataset.json",
+    #"/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/physics/physics_dataset.json",
+    "/Users/norranyu/Documents/ai_agents/durin/inference_neuralNets/datasets/stem/stem_dataset.json"
 ]
-
-DROPOUT = 0.3
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 
-# Check for GPU availability
+DEBUG = False
+
+# Check for GPU
 physical_devices = tf.config.list_physical_devices('GPU')
 print("\nPhysical devices:", physical_devices)
-
 if physical_devices:
     print("\nGPU is detected. TensorFlow is now ready to use Metal acceleration.\n")
     try:
@@ -31,28 +29,36 @@ if physical_devices:
 else:
     print("\nGPU is not yet detected\n")
 
-# Custom Layers
 class ReshapeForEmbedding(Layer):
-    """Custom layer to reshape flattened vectorized output back to (batch_size, sequence_length)."""
+    def __init__(self, output_sequence_length, **kwargs):
+        super(ReshapeForEmbedding, self).__init__(**kwargs)
+        self.output_sequence_length = output_sequence_length
+
     def call(self, inputs, ragged_lengths):
         batch_size = K.shape(ragged_lengths)[0]
         sequence_length = K.cast(K.max(ragged_lengths), dtype='int32')
-        inputs = K.reshape(inputs, [-1])
-        #tf.print("inputs shape after reshape:", K.shape(inputs))
-        total_elements = K.sum(ragged_lengths)
-        #tf.print("ragged_lengths:", ragged_lengths)
-        #tf.print("batch_size:", batch_size, "sequence_length:", sequence_length)
-        #tf.print("total_elements in inputs:", total_elements)
-        expected_elements = batch_size * sequence_length
-        inputs_padded = K.pad(inputs, [[0, expected_elements - K.shape(inputs)[0]]], mode='constant', constant_values=0)
-        #tf.print("inputs_padded shape:", K.shape(inputs_padded))
-        return K.reshape(inputs_padded, [batch_size, sequence_length])
+        total_tabs = K.sum(ragged_lengths)
+        expected_tokens = batch_size * sequence_length * self.output_sequence_length
+
+        if DEBUG:
+            tf.print("batch_size:", batch_size)
+            tf.print("ragged_lengths:", ragged_lengths)
+            tf.print("sequence_length:", sequence_length)
+            tf.print("inputs shape:", K.shape(inputs))
+            tf.print("total_tabs:", total_tabs)
+            tf.print("expected_tokens:", expected_tokens)
+
+        inputs = inputs[:total_tabs, :self.output_sequence_length]
+        current_rows = K.shape(inputs)[0]
+        padding_rows = K.maximum(0, batch_size * sequence_length - current_rows)
+        paddings = [[0, padding_rows], [0, 0]]
+        inputs_padded = K.pad(inputs, paddings, mode='constant', constant_values=0)
+        return K.reshape(inputs_padded, [batch_size, sequence_length * self.output_sequence_length])
 
     def compute_output_shape(self, input_shape):
         return (None, None)
 
 class FlattenRaggedLayer(Layer):
-    """Custom layer to flatten a ragged tensor to a 1D tensor."""
     def call(self, inputs):
         dense_tensor = inputs.to_tensor()
         return K.reshape(dense_tensor, [-1])
@@ -61,105 +67,75 @@ class FlattenRaggedLayer(Layer):
         return (None,)
 
 class ComputeRaggedLengthsLayer(Layer):
-    """Custom layer to compute the lengths of sequences in a ragged tensor."""
     def call(self, inputs):
-        return K.sum(K.ones_like(inputs, dtype='int32'), axis=1)
+        lengths = K.sum(K.ones_like(inputs, dtype='int32'), axis=1)
+        if DEBUG:
+            tf.print("Computed ragged_lengths:", lengths)
+        return lengths
 
     def compute_output_shape(self, input_shape):
         return (None,)
 
-def build_model(vectorize_layer, embedding_dim=128):
-    """
-    Builds a neural network to determine if a new tab aligns with opened tabs.
-    
-    Args:
-        vectorize_layer: Pre-configured TextVectorization layer for tokenization.
-        embedding_dim: Dimension of the embedding layer (default: 128).
-    
-    Returns:
-        Model: Compiled Keras model.
-    """
-    # 1. Define Input Layers
-    opened_tabs_input = Input(
-        shape=(None,),
-        dtype=tf.string,
-        name='opened_tabs_input',
-        ragged=True
-    )
-    new_tab_input = Input(
-        shape=(1,),
-        dtype=tf.string,
-        name='new_tab_input'
-    )
+def build_model(vectorize_layer, embedding_dim=128, output_sequence_length=10):
+    opened_tabs_input = Input(shape=(None,), dtype=tf.string, name='opened_tabs_input', ragged=True)
+    new_tab_input = Input(shape=(1,), dtype=tf.string, name='new_tab_input')
 
-    # 2. Process Opened Tabs
-    # Compute sequence lengths for ragged tensor
     ragged_lengths = ComputeRaggedLengthsLayer(name='compute_ragged_lengths')(opened_tabs_input)
     ragged_lengths = tf.keras.layers.Lambda(
         lambda x: x,
-        name='debug_ragged_lengths',
-        output_shape=(None,)
+        output_shape=(None,),
+        name='debug_ragged_lengths'
     )(ragged_lengths)
 
-    # Flatten ragged tensor for vectorization
     opened_tabs_flat = FlattenRaggedLayer(name='flatten_ragged')(opened_tabs_input)
     opened_tabs_flat = tf.keras.layers.Lambda(
         lambda x: x,
-        name='debug_flattened_tabs',
-        output_shape=(None,)
+        output_shape=(None,),
+        name='debug_flattened_tabs'
     )(opened_tabs_flat)
 
-    # Apply text vectorization and reshape
     opened_tabs_encoded = vectorize_layer(opened_tabs_flat)
     tf.print("opened_tabs_encoded shape:", K.shape(opened_tabs_encoded))
-    opened_tabs_encoded = ReshapeForEmbedding()(opened_tabs_encoded, ragged_lengths)
+    opened_tabs_encoded = ReshapeForEmbedding(output_sequence_length=output_sequence_length)(opened_tabs_encoded, ragged_lengths)
 
-    # Embedding and pooling for opened tabs
     opened_tabs_embedded = Embedding(
         input_dim=len(vectorize_layer.get_vocabulary()),
         output_dim=embedding_dim,
         name='opened_tabs_embedding'
     )(opened_tabs_encoded)
-    opened_tabs_pooled = GlobalAveragePooling1D(name='opened_tabs_pooling')(opened_tabs_embedded)
+    opened_tabs_lstm = LSTM(128, return_sequences=False, name='opened_tabs_lstm')(opened_tabs_embedded)
 
-    # 3. Process New Tab
     new_tab_encoded = vectorize_layer(new_tab_input)
+    tf.print("new_tab_encoded shape:", K.shape(new_tab_encoded))
     new_tab_embedded = Embedding(
         input_dim=len(vectorize_layer.get_vocabulary()),
         output_dim=embedding_dim,
         name='new_tab_embedding'
     )(new_tab_encoded)
-    new_tab_pooled = GlobalAveragePooling1D(name='new_tab_pooling')(new_tab_embedded)
+    new_tab_lstm = LSTM(128, return_sequences=False, name='new_tab_lstm')(new_tab_embedded)
 
-    # 4. Combine and Dense Layers
-    concatenated = Concatenate(name='concatenate_embeddings')([opened_tabs_pooled, new_tab_pooled])
+    concatenated = Concatenate(name='concatenate_embeddings')([opened_tabs_lstm, new_tab_lstm])
     
-    x = Dense(256, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01), name='dense_256')(concatenated)
-    x = tf.keras.layers.Dropout(DROPOUT)(x)
-    x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01), name='dense_128')(x)
-    x = tf.keras.layers.Dropout(DROPOUT)(x)
-    x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01), name='dense_64')(x)
-    x = tf.keras.layers.Dropout(DROPOUT)(x)
-    x = Dense(32, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01), name='dense_32')(x)
+    x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001), name='dense_128')(concatenated)
+    x = tf.keras.layers.Dropout(0.2)(x)
+    x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001), name='dense_64')(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
     output = Dense(1, activation='sigmoid', name='output')(x)
 
-    # 5. Create and Compile Model
-    model = Model(
-        inputs=[opened_tabs_input, new_tab_input],
-        outputs=output,
-        name='tab_alignment_model'
+    model = Model(inputs=[opened_tabs_input, new_tab_input], outputs=output, name='tab_alignment_model')
+    
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate=0.001,
+        decay_steps=1000,
+        decay_rate=0.9
     )
-    model.compile(
-        optimizer='adam',
-        loss='binary_crossentropy',
-        metrics=['accuracy']
-    )
-
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule),
+                  loss='binary_crossentropy',
+                  metrics=['accuracy'])
     model.summary()
     return model
 
 def load_and_validate_dataset(dataset_path):
-    """Load and validate a single dataset."""
     try:
         with open(dataset_path, 'r') as f:
             loaded_data = json.load(f)
@@ -168,6 +144,10 @@ def load_and_validate_dataset(dataset_path):
         labels = [item["alignment"] for item in loaded_data["data"]]
         
         for i, tabs in enumerate(opened_tabs_list):
+            token_counts = [len(tab.split()) for tab in tabs]
+            print(f"Sample {i} token counts per tab: {token_counts}")
+            if any(count > 10 for count in token_counts):
+                print(f"Warning: Sample {i} has tabs with >10 tokens: {tabs}")
             if not tabs or not isinstance(tabs, list) or any(not isinstance(t, str) or t.strip() == '' for t in tabs):
                 print(f"Invalid opened_tabs at index {i} in {dataset_path}: {tabs}")
                 return None, None, None
@@ -180,7 +160,7 @@ def load_and_validate_dataset(dataset_path):
         new_tab_array = np.array(new_tab_list, dtype=str)
         y = np.array(labels, dtype=np.int32)
         
-        print(f"Dataset {dataset_path} loaded successfully. Samples: opened_tabs={len(opened_tabs_list)}, new_tab={len(new_tab_list)}, labels={len(labels)}")
+        print(f"Dataset {dataset_path} loaded successfully. Samples: {len(opened_tabs_list)}")
         return opened_tabs_array, new_tab_array, y
     except FileNotFoundError:
         print(f"Error: Dataset file not found at '{dataset_path}'. Skipping.")
@@ -193,20 +173,19 @@ def load_and_validate_dataset(dataset_path):
         return None, None, None
 
 def main():
-    # Initialize TextVectorization
     def custom_standardize(input_data):
-        return tf.strings.lower(input_data)
+        lowercase = tf.strings.lower(input_data)
+        return tf.strings.regex_replace(lowercase, r'[^\w\s]', '')
 
     vectorize_layer = TextVectorization(
-        max_tokens=50000,
-        #max_tokens=10000000,  # Increased for larger vocabulary
+        max_tokens=20000,
         output_mode='int',
         standardize=custom_standardize,
-        split=None
-        #split = 'whitespace'
+        split='whitespace',
+        ngrams=2,
+        output_sequence_length=10
     )
 
-    # Load and validate datasets
     all_training_text = []
     all_datasets = []
     for dataset_path in dataset_paths:
@@ -224,44 +203,36 @@ def main():
         print("No valid datasets were loaded. Exiting.")
         return
 
-    # Adapt TextVectorization
     vectorize_layer.adapt(np.array(all_training_text, dtype=str))
     print("Vocabulary size:", len(vectorize_layer.get_vocabulary()))
     print("Sample vocabulary:", vectorize_layer.get_vocabulary()[:10])
 
-    # Build model
-    model = build_model(vectorize_layer)
+    model = build_model(vectorize_layer, output_sequence_length=10)
 
-    # Process each dataset
     for idx, (opened_tabs_array, new_tab_array, y) in enumerate(all_datasets):
         print(f"\nProcessing dataset {idx + 1}/{len(all_datasets)}: {dataset_paths[idx]}")
         
-        # Split data
         X_train_tabs, X_test_tabs, X_train_new, X_test_new, y_train, y_test = train_test_split(
             opened_tabs_array, new_tab_array, y, test_size=0.2, random_state=42)
 
-        # Convert to tensors
         X_train_tabs_ragged = tf.ragged.constant(X_train_tabs, dtype=tf.string)
         X_test_tabs_ragged = tf.ragged.constant(X_test_tabs, dtype=tf.string)
         X_train_new = tf.convert_to_tensor(X_train_new[:, None], dtype=tf.string)
         X_test_new = tf.convert_to_tensor(X_test_new[:, None], dtype=tf.string)
 
-        # Train model
         history = model.fit(
             {'opened_tabs_input': X_train_tabs_ragged, 'new_tab_input': X_train_new},
             y_train,
             epochs=30,
-            batch_size=16,
+            batch_size=32,
             validation_split=0.2,
-            validation_batch_size=16,
+            validation_batch_size=32,
             verbose=1,
-            callbacks=[tf.keras.callbacks.EarlyStopping(patience=30, monitor='val_loss', restore_best_weights=True)]
+            callbacks=[tf.keras.callbacks.EarlyStopping(patience=10, monitor='val_loss', restore_best_weights=True)]
         )
         
-        # Print training history
         print("Training history:", history.history)
 
-        # Evaluate model
         loss, accuracy = model.evaluate(
             {'opened_tabs_input': X_test_tabs_ragged, 'new_tab_input': X_test_new},
             y_test,
@@ -269,11 +240,9 @@ def main():
         )
         print(f"Model Accuracy on test data: {accuracy:.2f}")
 
-    # Prediction loop (unchanged)
     while True:
         try:
             model.summary()
-            _ = input("Press enter to proceed with a prediction: ")
             opened_tabs_str = input("Enter opened tabs (comma-separated): ")
             opened_tabs = opened_tabs_str.split(',')
             new_tab = input("Enter new tab: ")

@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Dense, Input, TextVectorization, Embedding, LSTM, Concatenate, Layer #type: ignore
+from tensorflow.keras.layers import Dense, Input, TextVectorization, Embedding, GlobalAveragePooling1D, Concatenate, Layer #type: ignore
 from tensorflow.keras.models import Model #type: ignore
 import keras.ops as K
 import numpy as np
@@ -9,12 +9,19 @@ import os
 
 dataset_paths = [
     #"/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/physics/physics_dataset.json",
-    "/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/physics/stem_dataset.json",
+    "/Users/norranyu/Documents/ai_agents/durin/inference_neuralNets/datasets/stem/stem_dataset.json",
+    #"/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/variety.json",
 ]
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 
-DEBUG = False
+DEBUG = False 
+
+LEARNING_RATE = 0.001
+BATCH_SIZE = 64
+PATIENCE = 30
+DROPOUT = 0.2
+REGULARIZERS = 0.001
 
 # Check for GPU
 physical_devices = tf.config.list_physical_devices('GPU')
@@ -29,7 +36,6 @@ if physical_devices:
 else:
     print("\nGPU is not yet detected\n")
 
-# Custom Layers
 class ReshapeForEmbedding(Layer):
     def __init__(self, output_sequence_length, **kwargs):
         super(ReshapeForEmbedding, self).__init__(**kwargs)
@@ -50,10 +56,12 @@ class ReshapeForEmbedding(Layer):
             tf.print("expected_tokens:", expected_tokens)
 
         inputs = inputs[:total_tabs, :self.output_sequence_length]
+
         current_rows = K.shape(inputs)[0]
         padding_rows = K.maximum(0, batch_size * sequence_length - current_rows)
         paddings = [[0, padding_rows], [0, 0]]
         inputs_padded = K.pad(inputs, paddings, mode='constant', constant_values=0)
+
         return K.reshape(inputs_padded, [batch_size, sequence_length * self.output_sequence_length])
 
     def compute_output_shape(self, input_shape):
@@ -72,12 +80,14 @@ class ComputeRaggedLengthsLayer(Layer):
         lengths = K.sum(K.ones_like(inputs, dtype='int32'), axis=1)
         if DEBUG:
             tf.print("Computed ragged_lengths:", lengths)
+
         return lengths
 
     def compute_output_shape(self, input_shape):
         return (None,)
 
-def build_model(vectorize_layer, embedding_dim=128, output_sequence_length=10):
+
+def build_model(vectorize_layer, embedding_dim=512, output_sequence_length=10):
     opened_tabs_input = Input(shape=(None,), dtype=tf.string, name='opened_tabs_input', ragged=True)
     new_tab_input = Input(shape=(1,), dtype=tf.string, name='new_tab_input')
 
@@ -104,7 +114,7 @@ def build_model(vectorize_layer, embedding_dim=128, output_sequence_length=10):
         output_dim=embedding_dim,
         name='opened_tabs_embedding'
     )(opened_tabs_encoded)
-    opened_tabs_lstm = LSTM(128, return_sequences=False, name='opened_tabs_lstm')(opened_tabs_embedded)
+    opened_tabs_pooled = GlobalAveragePooling1D(name='opened_tabs_pooling')(opened_tabs_embedded)
 
     new_tab_encoded = vectorize_layer(new_tab_input)
     tf.print("new_tab_encoded shape:", K.shape(new_tab_encoded))
@@ -113,28 +123,40 @@ def build_model(vectorize_layer, embedding_dim=128, output_sequence_length=10):
         output_dim=embedding_dim,
         name='new_tab_embedding'
     )(new_tab_encoded)
-    new_tab_lstm = LSTM(128, return_sequences=False, name='new_tab_lstm')(new_tab_embedded)
+    new_tab_pooled = GlobalAveragePooling1D(name='new_tab_pooling')(new_tab_embedded)
 
-    concatenated = Concatenate(name='concatenate_embeddings')([opened_tabs_lstm, new_tab_lstm])
-    
-    x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001), name='dense_128')(concatenated)
-    x = tf.keras.layers.Dropout(0.2)(x)
-    x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001), name='dense_64')(x)
-    x = tf.keras.layers.Dropout(0.2)(x)
-    output = Dense(1, activation='sigmoid', name='output')(x)
+    concatenated = Concatenate(name='concatenate_embeddings')([opened_tabs_pooled, new_tab_pooled])
+
+    x = Dense(512, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_512')(concatenated)
+    x = tf.keras.layers.Dropout(DROPOUT)(x)
+    x = Dense(256, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_256')(x)
+    x = tf.keras.layers.Dropout(DROPOUT)(x)
+    x = Dense(16, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_16')(x)
+    x = tf.keras.layers.Dropout(DROPOUT)(x)
+    output = Dense(1, activation='sigmoid', name='output')(x) 
+
+    # x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_128')(concatenated)
+    # x = tf.keras.layers.Dropout(DROPOUT)(x)
+    # x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_64')(x)
+    # x = tf.keras.layers.Dropout(DROPOUT)(x)
+    # x = Dense(32, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_32')(x)
+    # x = tf.keras.layers.Dropout(DROPOUT)(x)
+    # x = Dense(16, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_16')(x)
+    # x = tf.keras.layers.Dropout(DROPOUT)(x)
+    # x = Dense(8, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_8')(x)
+    # output = Dense(1, activation='sigmoid', name='output')(x)
+
+    # x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_128')(concatenated)
+    # x = tf.keras.layers.Dropout(DROPOUT)(x)
+    # x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_64')(x)
+    # x = tf.keras.layers.Dropout(DROPOUT)(x)
+    # output = Dense(1, activation='sigmoid', name='output')(x)
 
     model = Model(inputs=[opened_tabs_input, new_tab_input], outputs=output, name='tab_alignment_model')
-    
-    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-        initial_learning_rate=0.001,
-        decay_steps=1000,
-        decay_rate=0.9
-    )
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule),
-                  loss='binary_crossentropy',
-                  metrics=['accuracy'])
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate = LEARNING_RATE, clipnorm=1.0), loss='binary_crossentropy', metrics=['accuracy'])
     model.summary()
     return model
+
 
 def load_and_validate_dataset(dataset_path):
     try:
@@ -175,16 +197,14 @@ def load_and_validate_dataset(dataset_path):
 
 def main():
     def custom_standardize(input_data):
-        lowercase = tf.strings.lower(input_data)
-        return tf.strings.regex_replace(lowercase, r'[^\w\s]', '')
+        return tf.strings.lower(input_data)
 
     vectorize_layer = TextVectorization(
-        max_tokens=20000,
+        max_tokens=10000000,
         output_mode='int',
         standardize=custom_standardize,
         split='whitespace',
-        ngrams=2,
-        output_sequence_length=10
+        output_sequence_length=30
     )
 
     all_training_text = []
@@ -225,11 +245,11 @@ def main():
             {'opened_tabs_input': X_train_tabs_ragged, 'new_tab_input': X_train_new},
             y_train,
             epochs=30,
-            batch_size=32,
+            batch_size=BATCH_SIZE,
             validation_split=0.2,
-            validation_batch_size=32,
+            validation_batch_size=16,
             verbose=1,
-            callbacks=[tf.keras.callbacks.EarlyStopping(patience=10, monitor='val_loss', restore_best_weights=True)]
+            callbacks=[tf.keras.callbacks.EarlyStopping(patience=PATIENCE, monitor='val_accuracy', restore_best_weights=True)]
         )
         
         print("Training history:", history.history)

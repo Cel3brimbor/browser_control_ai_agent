@@ -8,18 +8,17 @@ from sklearn.model_selection import train_test_split
 import os
 
 dataset_paths = [
-    #"/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/physics/physics_dataset.json",
-    "/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/physics/stem_dataset.json",
-    #"/Users/norranyu/Documents/coding/x_code/Durin/inference_engine/datasets/variety.json",
+    "/Users/norranyu/Documents/ai_agents/durin/inference_neuralNets/datasets/stem/stem_dataset.json"
 ]
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
 
 DEBUG = False 
 
+LEARNING_RATE = 0.001
 BATCH_SIZE = 64
-PATIENCE = 30
-DROPOUT = 0.0
+PATIENCE = 20
+DROPOUT = 0.2
 REGULARIZERS = 0.001
 
 # Check for GPU
@@ -35,7 +34,6 @@ if physical_devices:
 else:
     print("\nGPU is not yet detected\n")
 
-# Custom Layers
 class ReshapeForEmbedding(Layer):
     def __init__(self, output_sequence_length, **kwargs):
         super(ReshapeForEmbedding, self).__init__(**kwargs)
@@ -44,7 +42,7 @@ class ReshapeForEmbedding(Layer):
     def call(self, inputs, ragged_lengths):
         batch_size = K.shape(ragged_lengths)[0]
         sequence_length = K.cast(K.max(ragged_lengths), dtype='int32')
-        total_tabs = K.sum(ragged_lengths)  # Total number of tabs in the batch
+        total_tabs = K.sum(ragged_lengths)
         expected_tokens = batch_size * sequence_length * self.output_sequence_length
 
         if DEBUG:
@@ -55,16 +53,11 @@ class ReshapeForEmbedding(Layer):
             tf.print("total_tabs:", total_tabs)
             tf.print("expected_tokens:", expected_tokens)
 
-        # Ensure inputs have the correct shape
-        inputs = inputs[:total_tabs, :self.output_sequence_length]  # Truncate to (total_tabs, output_sequence_length)
-
-        # Compute padding for 2D tensor
+        inputs = inputs[:total_tabs, :self.output_sequence_length]
         current_rows = K.shape(inputs)[0]
         padding_rows = K.maximum(0, batch_size * sequence_length - current_rows)
-        paddings = [[0, padding_rows], [0, 0]]  # Pad rows, not columns
+        paddings = [[0, padding_rows], [0, 0]]
         inputs_padded = K.pad(inputs, paddings, mode='constant', constant_values=0)
-
-        # Reshape to (batch_size, sequence_length * output_sequence_length)
         return K.reshape(inputs_padded, [batch_size, sequence_length * self.output_sequence_length])
 
     def compute_output_shape(self, input_shape):
@@ -83,12 +76,10 @@ class ComputeRaggedLengthsLayer(Layer):
         lengths = K.sum(K.ones_like(inputs, dtype='int32'), axis=1)
         if DEBUG:
             tf.print("Computed ragged_lengths:", lengths)
-
         return lengths
 
     def compute_output_shape(self, input_shape):
         return (None,)
-
 
 def build_model(vectorize_layer, embedding_dim=512, output_sequence_length=10):
     opened_tabs_input = Input(shape=(None,), dtype=tf.string, name='opened_tabs_input', ragged=True)
@@ -121,7 +112,6 @@ def build_model(vectorize_layer, embedding_dim=512, output_sequence_length=10):
 
     new_tab_encoded = vectorize_layer(new_tab_input)
     tf.print("new_tab_encoded shape:", K.shape(new_tab_encoded))
-    # Remove the Lambda layer, as new_tab_encoded is already (None, output_sequence_length)
     new_tab_embedded = Embedding(
         input_dim=len(vectorize_layer.get_vocabulary()),
         output_dim=embedding_dim,
@@ -130,29 +120,19 @@ def build_model(vectorize_layer, embedding_dim=512, output_sequence_length=10):
     new_tab_pooled = GlobalAveragePooling1D(name='new_tab_pooling')(new_tab_embedded)
 
     concatenated = Concatenate(name='concatenate_embeddings')([opened_tabs_pooled, new_tab_pooled])
-    
-    x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_128')(concatenated)
+
+    x = Dense(512, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_512')(concatenated)
     x = tf.keras.layers.Dropout(DROPOUT)(x)
-    x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_64')(x)
-    x = tf.keras.layers.Dropout(DROPOUT)(x)
-    x = Dense(32, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_32')(x)
+    x = Dense(256, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_256')(x)
     x = tf.keras.layers.Dropout(DROPOUT)(x)
     x = Dense(16, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_16')(x)
     x = tf.keras.layers.Dropout(DROPOUT)(x)
-    x = Dense(8, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_8')(x)
     output = Dense(1, activation='sigmoid', name='output')(x)
 
-    # x = Dense(128, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_128')(concatenated)
-    # x = tf.keras.layers.Dropout(DROPOUT)(x)
-    # x = Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(REGULARIZERS), name='dense_64')(x)
-    # x = tf.keras.layers.Dropout(DROPOUT)(x)
-    # output = Dense(1, activation='sigmoid', name='output')(x)
-
     model = Model(inputs=[opened_tabs_input, new_tab_input], outputs=output, name='tab_alignment_model')
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE, clipnorm=1.0), loss='binary_crossentropy', metrics=['accuracy'])
     model.summary()
     return model
-
 
 def load_and_validate_dataset(dataset_path):
     try:
@@ -191,6 +171,16 @@ def load_and_validate_dataset(dataset_path):
         print(f"Error: JSON data in '{dataset_path}' is missing 'opened_tabs', 'new_tab', or 'alignment' keys. Skipping.")
         return None, None, None
 
+def save_vectorization_layer(vectorize_layer, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    vocab = vectorize_layer.get_vocabulary()
+    config = vectorize_layer.get_config()
+    # Remove non-serializable objects (e.g., the standardize function)
+    serializable_config = {k: v for k, v in config.items() if k != 'standardize'}
+    with open(os.path.join(output_dir, 'vectorize_config.json'), 'w') as f:
+        json.dump({'vocabulary': vocab, 'config': serializable_config}, f)
+    print(f"TextVectorization layer saved to {output_dir}/vectorize_config.json")
+
 def main():
     def custom_standardize(input_data):
         return tf.strings.lower(input_data)
@@ -226,6 +216,9 @@ def main():
 
     model = build_model(vectorize_layer, output_sequence_length=10)
 
+    output_dir = '/Users/norranyu/Documents/coding/x_code/Durin/nn_models'
+    os.makedirs(output_dir, exist_ok=True)
+
     for idx, (opened_tabs_array, new_tab_array, y) in enumerate(all_datasets):
         print(f"\nProcessing dataset {idx + 1}/{len(all_datasets)}: {dataset_paths[idx]}")
         
@@ -257,29 +250,13 @@ def main():
         )
         print(f"Model Accuracy on test data: {accuracy:.2f}")
 
-    while True:
-        try:
-            model.summary()
-            opened_tabs_str = input("Enter opened tabs (comma-separated): ")
-            opened_tabs = opened_tabs_str.split(',')
-            new_tab = input("Enter new tab: ")
-
-            inputs = {
-                'opened_tabs_input': tf.ragged.constant([opened_tabs], dtype=tf.string),
-                'new_tab_input': tf.convert_to_tensor([[new_tab]], dtype=tf.string)
-            }
-            
-            determination = model.predict(inputs, verbose=0)[0][0]
-            print(f"\nAlignment probability: {determination:.2f}")
-            if determination > 0.5:
-                print("The new tab likely aligns with the current topic.")
-            else:
-                print("The new tab likely does not align with the current topic.")
-            _ = input("\n\nPress Enter to proceed: ")
-            
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            break
+    _ = input("Press enter to save the model (or control C to make an abortion): ")
+    model.save(os.path.join(output_dir, 'deepmind.keras'))
+    print(f"Model saved to {output_dir}/deepmind.keras")
+    save_vectorization_layer(vectorize_layer, output_dir)
 
 if __name__ == "__main__":
     main()
+
+# pip install tensorflowjs
+# tensorflowjs_converter --input_format=keras /Users/norranyu/Documents/coding/x_code/Durin/nn_models/deepmind.keras /Users/norranyu/Documents/coding/x_code/Durin/nn_models/tfjs_model

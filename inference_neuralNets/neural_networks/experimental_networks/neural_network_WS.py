@@ -38,7 +38,7 @@ class ReshapeForEmbedding(Layer):
     def call(self, inputs, ragged_lengths):
         batch_size = K.shape(ragged_lengths)[0]
         sequence_length = K.cast(K.max(ragged_lengths), dtype='int32')
-        total_tabs = K.sum(ragged_lengths)  # Total number of tabs in the batch
+        total_tabs = K.sum(ragged_lengths)
         expected_tokens = batch_size * sequence_length * self.output_sequence_length
 
         if DEBUG:
@@ -49,16 +49,14 @@ class ReshapeForEmbedding(Layer):
             tf.print("total_tabs:", total_tabs)
             tf.print("expected_tokens:", expected_tokens)
 
-        # Ensure inputs have the correct shape
-        inputs = inputs[:total_tabs, :self.output_sequence_length]  # Truncate to (total_tabs, output_sequence_length)
+        inputs = inputs[:total_tabs, :self.output_sequence_length]
 
-        # Compute padding for 2D tensor
+        #compute padding for 2D tensor
         current_rows = K.shape(inputs)[0]
         padding_rows = K.maximum(0, batch_size * sequence_length - current_rows)
-        paddings = [[0, padding_rows], [0, 0]]  # Pad rows, not columns
+        paddings = [[0, padding_rows], [0, 0]]
         inputs_padded = K.pad(inputs, paddings, mode='constant', constant_values=0)
 
-        # Reshape to (batch_size, sequence_length * output_sequence_length)
         return K.reshape(inputs_padded, [batch_size, sequence_length * self.output_sequence_length])
 
     def compute_output_shape(self, input_shape):
@@ -115,7 +113,7 @@ def build_model(vectorize_layer, embedding_dim=512, output_sequence_length=10):
 
     new_tab_encoded = vectorize_layer(new_tab_input)
     tf.print("new_tab_encoded shape:", K.shape(new_tab_encoded))
-    # Remove the Lambda layer, as new_tab_encoded is already (None, output_sequence_length)
+    #remove the lambda layer
     new_tab_embedded = Embedding(
         input_dim=len(vectorize_layer.get_vocabulary()),
         output_dim=embedding_dim,
