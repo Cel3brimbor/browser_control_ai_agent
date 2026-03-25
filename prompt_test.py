@@ -17,11 +17,18 @@ def analyze_webpage_subject(currentTabTitles, newTabTitle):
         # Does the newly opened tab's title {newTabTitle} seem to align or be on task compared to the current ones?
         # Return 0 or 1 only. 0 for off-task, 1 for on-task.
         # Do not say anything other than one of those two numbers."""
+
         prompt = f"""
         These are the current tab titles in the user's browser: ${currentTabTitles}. They are comma-seperated.
         Does the newly opened tab's title "${newTabTitle}" seem to align or be on-task compared to the current ones?
         It is on-task if it most likely helps the user's current tabs, and off-task if it is most likely a distraction.
         Return 0 or 1 only. 0 for off-task, 1 for on-task."""
+
+        # prompt = f"""
+        # These are the current tab titles in the user's browser: ${currentTabTitles}. They are comma-seperated.
+        # Does the newly opened tab's title "${newTabTitle}" seem to align or be on-task compared to the current ones?
+        # It is on-task if it most likely helps the user's current tabs, and off-task if it is most likely a distraction.
+        # Return whether you think it is on task or off task. Give reasoning."""
 
         lm_studio_headers = {
             "Content-Type": "application/json",

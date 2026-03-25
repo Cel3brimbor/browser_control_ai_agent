@@ -1,8 +1,6 @@
-const projectIdInput = document.getElementById('projectId');
-const locationInput = document.getElementById('location');
+const baseUrlInput = document.getElementById('baseUrl');
 const modelInput = document.getElementById('model');
-const saveGeminiConfigBtn = document.getElementById('saveGeminiConfig');
-const authStatusEl = document.getElementById('authStatus');
+const saveLmstudioConfigBtn = document.getElementById('saveLmstudioConfig');
 
 const blockInput = document.getElementById('blockInput');
 const addBlockBtn = document.getElementById('addBlock');
@@ -12,15 +10,12 @@ const addWhiteBtn = document.getElementById('addWhite');
 const whiteList = document.getElementById('whiteList');
 
 async function loadData() {
-  const { blockedUrls = [], whitelistUrls = [], geminiConfig = {} } = await chrome.storage.sync.get([
-    'blockedUrls', 'whitelistUrls', 'geminiConfig'
+  const { blockedUrls = [], whitelistUrls = [], lmstudioConfig = {} } = await chrome.storage.sync.get([
+    'blockedUrls', 'whitelistUrls', 'lmstudioConfig'
   ]);
 
-  projectIdInput.value = geminiConfig.projectId || 'ai-browser-blocker';
-  locationInput.value = geminiConfig.location || 'us-central1';
-  modelInput.value = geminiConfig.model || 'google/gemini-2.0-flash-001';
-
-  checkAuthStatus();
+  baseUrlInput.value = lmstudioConfig.baseUrl || 'http://127.0.0.1:1234';
+  modelInput.value = lmstudioConfig.model || 'local-model';
 
   blockList.innerHTML = '';
   blockedUrls.forEach(url => addListItem(blockList, url, 'REMOVE_BLOCK'));

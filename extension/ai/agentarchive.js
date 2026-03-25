@@ -1,8 +1,15 @@
 export async function shouldAllowWithGemini(newUrl, newTitle, currentTabTitles, config, accessToken) {
+  // const prompt = `
+  // These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}. They are comma-seperated.
+  // Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones?
+  // Return 0 or 1 only. 0 for off-task, 1 for on-task.`;
+
+
   const prompt = `
   These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}. They are comma-seperated.
   Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones?
-  Return 0 or 1 only. 0 for off-task, 1 for on-task.`;
+  Return whether it is on task or off task. Give reason why.`;
+
 
   const payload = {
     model: config.model,

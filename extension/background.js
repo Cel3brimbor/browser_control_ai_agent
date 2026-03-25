@@ -1,6 +1,6 @@
 const BLOCKED_KEY = 'blockedUrls';
 const WHITELIST_KEY = 'whitelistUrls';
-const GEMINI_CONFIG_KEY = 'geminiConfig';
+const LMSTUDIO_CONFIG_KEY = 'lmstudioConfig';
 
 async function getBlocked() {
   const { [BLOCKED_KEY]: list = [] } = await chrome.storage.sync.get(BLOCKED_KEY);
@@ -31,28 +31,12 @@ async function _removeFromSet(key, url) {
   await chrome.storage.sync.set({ [key]: [...set] });
 }
 
-async function getGeminiConfig() {
-  const { [GEMINI_CONFIG_KEY]: config = {} } = await chrome.storage.sync.get(GEMINI_CONFIG_KEY);
+async function getLmstudioConfig() {
+  const { [LMSTUDIO_CONFIG_KEY]: config = {} } = await chrome.storage.sync.get(LMSTUDIO_CONFIG_KEY);
   return {
-    projectId: config.projectId || 'ai-browser-blocker', //from google cloud
-    location: config.location || 'us-central1',
-    model: config.model || 'google/gemini-2.0-flash-001'
+    baseUrl: config.baseUrl || 'http://127.0.0.1:1234',
+    model: config.model || 'local-model'
   };
-}
-
-async function getAccessToken() {
-  try {
-    const token = await new Promise((resolve, reject) => {
-      chrome.identity.getAuthToken({ interactive: true }, (token) => {
-        if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
-        else resolve(token);
-      });
-    });
-    return token;
-  } catch (err) {
-    console.error('OAuth error:', err);
-    throw err;
-  }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -83,7 +67,7 @@ chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
   if (msg.type === 'REMOVE_BLOCK') await removeBlocked(msg.url);
   if (msg.type === 'ADD_WHITELIST') await addWhitelisted(msg.url);
   if (msg.type === 'REMOVE_WHITELIST') await removeWhitelisted(msg.url);
-  if (msg.type === 'SET_GEMINI_CONFIG') await chrome.storage.sync.set({ [GEMINI_CONFIG_KEY]: msg.config });
+  if (msg.type === 'SET_LMSTUDIO_CONFIG') await chrome.storage.sync.set({ [LMSTUDIO_CONFIG_KEY]: msg.config });
   if (msg.type === 'REFRESH_UI') chrome.runtime.sendMessage({ type: 'REFRESH_UI' });
 });
 
@@ -121,9 +105,8 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       return;
     }
 
-    const config = await getGeminiConfig();
-    const token = await getAccessToken();
-    const allowed = await globalThis.agentDetermination(url, tab.title || '', currentTitles, config, token);
+    const config = await getLmstudioConfig();
+    const allowed = await globalThis.agentDetermination(url, tab.title || '', currentTitles, config);
     if (!allowed) {
       ai_block(tabId);
     }
@@ -141,7 +124,7 @@ function explicitBlock(tabId) {
   chrome.tabs.update(tabId, { url: chrome.runtime.getURL('explicit_block.html') });
 }
 
-async function agentDetermination(newUrl, newTitle, currentTabTitles, config, accessToken) {
+async function agentDetermination(newUrl, newTitle, currentTabTitles, config) {
   const prompt = `
   These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}. They are comma-seperated.
   Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones?
@@ -155,14 +138,13 @@ async function agentDetermination(newUrl, newTitle, currentTabTitles, config, ac
     max_tokens: 10
   };
 
-  const apiUrl = `https://${config.location}-aiplatform.googleapis.com/v1/projects/${config.projectId}/locations/${config.location}/endpoints/openapi/chat/completions`;
+  const apiUrl = `${config.baseUrl}/v1/chat/completions`;
 
   try {
     const resp = await fetch(apiUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload)
     });
@@ -174,7 +156,7 @@ async function agentDetermination(newUrl, newTitle, currentTabTitles, config, ac
 
     return answer === '1';
   } catch (err) {
-    console.error('Gemini error:', err);
+    console.error('LM Studio error:', err);
     return false;
   }
 }
