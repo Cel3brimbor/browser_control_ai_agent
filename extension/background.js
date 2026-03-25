@@ -71,16 +71,18 @@ chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
   if (msg.type === 'REFRESH_UI') chrome.runtime.sendMessage({ type: 'REFRESH_UI' });
 });
 
-chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+async function handleNavigation(details) {
   if (details.frameId !== 0) return;
 
   const url = details.url;
   const tabId = details.tabId;
 
+  console.log('navigation event', { type: details.transitionType || details.reason || 'unknown', url, tabId });
+
   const blocked = await getBlocked();
   const whitelisted = await getWhitelisted();
 
-  //blacklist explicit block 
+  //blacklist explicit block
   if (blocked.has(url) || blocked.has(new URL(url).origin + '/*')) {
     explicitBlock(tabId);
     return;
@@ -88,6 +90,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
   //no agent check if whitelist
   if (whitelisted.has(url) || whitelisted.has(new URL(url).origin + '/*')) {
+    console.log('whitelisted url, allowing:', url);
     return;
   }
 
@@ -112,9 +115,11 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     }
   } catch (err) {
     console.error('AI decision failed:', err);
-    //redirectToBlocked(tabId); 
   }
-});
+}
+
+chrome.webNavigation.onCommitted.addListener(handleNavigation);
+chrome.webNavigation.onHistoryStateUpdated.addListener(handleNavigation);
 
 function ai_block(tabId) {
   chrome.tabs.update(tabId, { url: chrome.runtime.getURL('blocked_by_ai.html') });
@@ -125,17 +130,23 @@ function explicitBlock(tabId) {
 }
 
 async function agentDetermination(newUrl, newTitle, currentTabTitles, config) {
+  // if (/^https?:\/\/(www\.)?youtube\.com/i.test(newUrl)) {
+  //   console.log('Bypassing AI block for YouTube URL', newUrl);
+  //   return true;
+  // }
+
   const prompt = `
-  These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}. They are comma-seperated.
-  Does the newly opened tab's title "${newTitle}" seem to align or be on-task compared to the current ones?
-  It is on-task if it most likely helps the user's current tabs, and off-task if it is most likely a distraction.
-  Return 0 or 1 only. 0 for off-task, 1 for on-task.`;
+These are the current tab titles in the user's browser: ${currentTabTitles.join(', ')}.
+The current request is opening URL: ${newUrl} with title: "${newTitle}".
+Does this new tab seem on-task relative to the existing tabs?
+Answer only exactly one of: on-task or off-task.
+Also include a brief reason in plain text.`;
 
   const payload = {
     model: config.model,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.0,
-    max_tokens: 10
+    max_tokens: 100
   };
 
   const apiUrl = `${config.baseUrl}/v1/chat/completions`;
@@ -152,9 +163,23 @@ async function agentDetermination(newUrl, newTitle, currentTabTitles, config) {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
     const data = await resp.json();
-    const answer = data.choices?.[0]?.message?.content?.trim();
+    const answerRaw = data.choices?.[0]?.message?.content?.trim() || '';
 
-    return answer === '1';
+    const normalized = answerRaw.toLowerCase();
+    const isOnTask = /\b(on[- ]task|on task|on-task|1)\b/.test(normalized);
+    const isOffTask = /\b(off[- ]task|off task|off-task|0)\b/.test(normalized);
+
+    if (isOnTask) {
+      console.log('Decision: allowed (on-task)');
+      return true;
+    }
+    if (isOffTask) {
+      console.log('Decision: blocked (off-task)');
+      return false;
+    }
+
+    console.warn('Unexpected LM Studio answer, defaulting to safe allow:', answerRaw);
+    return true;
   } catch (err) {
     console.error('LM Studio error:', err);
     return false;
